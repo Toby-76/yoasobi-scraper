@@ -34,6 +34,7 @@ jobs:
       env:
         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        YOASOBI_COOKIES: ${{ secrets.YOASOBI_COOKIES }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         BACKFILL: ${{ inputs.backfill }}
       run: python scraper.py

@@ -157,6 +157,7 @@ def process_and_save(entries):
             pass
 
     new_entries = []
+    current_year = datetime.now().year
     
     for entry in entries:
         diary_id = entry.get("c_diary_id")
@@ -171,21 +172,42 @@ def process_and_save(entries):
         image_url = entry.get("girls_image_url")
         local_image_name = download_image(image_url)
         
-        # 2. Translate Content
-        # 'decoded_body_org' usually contains the raw text without too much HTML
+        # 2. Content & Cookie Validation
         raw_text = entry.get("decoded_body_org", "") or entry.get("body", "")
+        
+        # Check for known "Member Only" placeholders
+        if "マイガール登録" in raw_text or "Member Only" in raw_text:
+             print("⚠️  WARNING: Member Only content detected! Your YOASOBI_COOKIES might be invalid or expired.")
+
         # Strip some HTML tags if needed, but translator handles plaintext best
         translated_text = translate_text(raw_text)
         
+        # 3. Parse Date
+        date_str = entry.get("create_date") # e.g. "12/28 17:00"
+        timestamp = time.time()
+        
+        if date_str:
+            try:
+                # Parse as current year first
+                dt = datetime.strptime(f"{current_year}/{date_str}", "%Y/%m/%d %H:%M")
+                
+                # If date is in the future (plus a small buffer), it must be from last year
+                if dt > datetime.now() + requests.utils.timedelta(days=1):
+                    dt = dt.replace(year=current_year - 1)
+                
+                timestamp = dt.timestamp()
+            except Exception as e:
+                print(f"Error parsing date '{date_str}': {e}")
+
         processed_entry = {
             "id": diary_id,
-            "date": entry.get("create_date"), # Format: "12/28 17:00" - might need Year
+            "date": date_str,
             "title": entry.get("subject"),
             "original_text": raw_text,
             "translated_text": translated_text,
             "image_filename": local_image_name,
             "image_url_original": image_url,
-            "timestamp": time.time()
+            "timestamp": timestamp
         }
         
         new_entries.append(processed_entry)
@@ -297,6 +319,10 @@ def fetch_all_entries(session, token, params, existing_ids):
             print(f"Added {len(new_batch)} new entries from page {page}.")
         elif force_backfill:
              print(f"Page {page} processed (all duplicates), continuing to next page...")
+        elif not new_batch:
+            # If standard mode and no new entries (but didn't trip stop_signal??), break safety
+            print("No new entries on this page. Stopping.")
+            break
 
         page += 1
         time.sleep(1) # Be nice to the server
