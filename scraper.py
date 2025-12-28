@@ -212,6 +212,9 @@ def process_and_save(entries):
         
         new_entries.append(processed_entry)
         
+    # Sort new entries by timestamp descending (Newest First) so they appear in correct order
+    new_entries.sort(key=lambda x: x["timestamp"], reverse=True)
+        
     return new_entries
 
 def upload_to_notion(entries):
