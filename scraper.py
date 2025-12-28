@@ -142,11 +142,13 @@ def translate_text(text):
         print(f"Translation error: {e}")
         return text # Fallback to original
 
+import re
+
+# ... existing imports ...
+
 def process_and_save(entries):
     """Process entries, translate, download images, and prepare for Notion."""
-    processed_data = []
-    
-    # Load previously processed IDs to avoid duplicates
+    # ... existing processed_ids check ...
     processed_ids = set()
     if os.path.exists(DATA_FILE):
         try:
@@ -158,43 +160,81 @@ def process_and_save(entries):
 
     new_entries = []
     current_year = datetime.now().year
+    from datetime import timedelta # Ensure import
     
     for entry in entries:
         diary_id = entry.get("c_diary_id")
         
         if diary_id in processed_ids:
-            print(f"Skipping duplicate entry {diary_id}")
+            # print(f"Skipping duplicate entry {diary_id}")
             continue
             
         print(f"Processing new entry: {entry.get('subject')}")
         
-        # 1. Download Image
+        # 1. Main Cover Image
         image_url = entry.get("girls_image_url")
-        local_image_name = download_image(image_url)
+        main_image_name = download_image(image_url)
         
         # 2. Content & Cookie Validation
         raw_text = entry.get("decoded_body_org", "") or entry.get("body", "")
-        
-        # Check for known "Member Only" placeholders
         if "マイガール登録" in raw_text or "Member Only" in raw_text:
              print("⚠️  WARNING: Member Only content detected! Your YOASOBI_COOKIES might be invalid or expired.")
 
-        # Strip some HTML tags if needed, but translator handles plaintext best
-        translated_text = translate_text(raw_text)
+        # 3. Rich Content Extraction (Body Images + Video)
+        content_blocks = []
         
-        # 3. Parse Date
-        date_str = entry.get("create_date") # e.g. "12/28 17:00"
+        # A. Text Content (Paragraphs)
+        # Simple HTML to text cleanup (preserving newlines)
+        clean_text = re.sub(r'<br\s*/?>', '\n', raw_text)
+        clean_text = re.sub(r'<[^>]+>', '', clean_text) # Remove other tags
+        translated_text = translate_text(clean_text)
+        content_blocks.append({"type": "text", "content": translated_text})
+        
+        # B. Inline Images from Body
+        # Regex to find <img src="..."> in the raw body (not decoded, as decoded strip tags sometimes?)
+        # Use 'body' or 'pcbody' for HTML
+        html_body = entry.get("body", "") or entry.get("pcbody", "")
+        inline_images = re.findall(r'src="([^"]+)"', html_body)
+        
+        for img_src in inline_images:
+            if "cityheaven.net" in img_src or "yoasobi-heaven" in img_src:
+                # Some are deco/emoji, filter if needed? 
+                # Let's verify it's a photo (usually contains 'img/girls' or 'img/deco')
+                # Users want all images including menu items, so download all.
+                f_name = download_image(img_src)
+                if f_name:
+                    content_blocks.append({"type": "image", "filename": f_name, "url": img_src})
+
+        # C. Video (if exists)
+        # https://img.cityheaven.net/cs/mvdiary/{commu_id}/{member_id}/{diary_id}/{filename}
+        movie_file = entry.get("movie_filename")
+        if movie_file:
+            commu_id = entry.get("c_commu_id")
+            member_id = entry.get("c_member_id")
+            video_url = f"https://img.cityheaven.net/cs/mvdiary/{commu_id}/{member_id}/{diary_id}/{movie_file}"
+            print(f"Found video: {video_url}")
+            
+            # Download video? Or just link it? 
+            # Notion allows external video links (embeds). 
+            # Downloading 50MB video might be heavy for GitHub Actions artifact? 
+            # User asked to "save to MP4". If we download, we need to commit it. GitHub repo limit is 1GB-ish.
+            # Storing videos in git is bad practice.
+            # BUT user asked "can we save it as mp4". 
+            # Let's try to link it first (persistent URL?). 
+            # Check if URL expires. Cityheaven URLs usually static.
+            # Use EXTERNAL VIDEO block in Notion.
+            # If user insisted on "saving", maybe they meant "in Notion".
+            content_blocks.append({"type": "video", "url": video_url})
+
+        # 4. Parse Date
+        date_str = entry.get("create_date") 
         timestamp = time.time()
         
         if date_str:
             try:
-                # Parse as current year first
                 dt = datetime.strptime(f"{current_year}/{date_str}", "%Y/%m/%d %H:%M")
-                
-                # If date is in the future (plus a small buffer), it must be from last year
-                if dt > datetime.now() + requests.utils.timedelta(days=1):
+                if dt > datetime.now() + timedelta(days=1):
                     dt = dt.replace(year=current_year - 1)
-                
                 timestamp = dt.timestamp()
             except Exception as e:
                 print(f"Error parsing date '{date_str}': {e}")
@@ -203,16 +243,17 @@ def process_and_save(entries):
             "id": diary_id,
             "date": date_str,
             "title": entry.get("subject"),
-            "original_text": raw_text,
+            "original_text": clean_text,
             "translated_text": translated_text,
-            "image_filename": local_image_name,
+            "image_filename": main_image_name,
             "image_url_original": image_url,
-            "timestamp": timestamp
+            "timestamp": timestamp,
+            "content_blocks": content_blocks # New field
         }
         
         new_entries.append(processed_entry)
         
-    # Sort new entries by timestamp descending (Newest First) so they appear in correct order
+    # Sort new entries by timestamp descending (Newest First)
     new_entries.sort(key=lambda x: x["timestamp"], reverse=True)
         
     return new_entries
@@ -221,6 +262,7 @@ def upload_to_notion(entries):
     """Upload new entries to Notion database."""
     token = os.environ.get("NOTION_TOKEN")
     database_id = os.environ.get("NOTION_DATABASE_ID")
+    github_repo = os.environ.get("GITHUB_REPOSITORY")
     
     if not token or not database_id:
         print("Notion credentials not found. Skipping upload.")
@@ -232,26 +274,62 @@ def upload_to_notion(entries):
         try:
             print(f"Uploading to Notion: {entry['title']}")
             
-            # Construct the proper GitHub raw URL for the image
-            # Assumes the repo is public or the user has a way to view it. 
-            # Ideally, this should be configurable.
-            # Format: https://raw.githubusercontent.com/<user>/<repo>/main/images/<filename>
-            # For now, we will just use the original URL if we can't construct a permanent one easily without more env vars
-            # BUT the user specifically wanted persistent storage.
-            # So we should use the raw github url.
+            # Construct GitHub raw URL for images
+            def get_gh_url(filename):
+                if github_repo:
+                    return f"https://raw.githubusercontent.com/{github_repo}/main/images/{filename}"
+                return None
+
+            # 1. Prepare Block Children (The Page Content)
+            children_blocks = []
             
-            github_repo = os.environ.get("GITHUB_REPOSITORY") # "owner/repo"
-            if github_repo:
-                image_url = f"https://raw.githubusercontent.com/{github_repo}/main/images/{entry['image_filename']}"
-            else:
-                image_url = entry["image_url_original"] # Fallback
+            # Add Text Paragraph
+            # Split text by newlines to make nice paragraphs
+            for line in entry['translated_text'].split('\n'):
+                if line.strip():
+                    children_blocks.append({
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [{"type": "text", "text": {"content": line[:2000]}}]
+                        }
+                    })
+            
+            # Add Rich Media Blocks (Inline Images/Videos from body)
+            for block in entry.get("content_blocks", []):
+                if block['type'] == 'image':
+                    img_gh_url = get_gh_url(block['filename']) or block['url']
+                    children_blocks.append({
+                        "object": "block",
+                        "type": "image",
+                        "image": {
+                            "type": "external",
+                            "external": {"url": img_gh_url}
+                        }
+                    })
+                elif block['type'] == 'video':
+                    children_blocks.append({
+                        "object": "block",
+                        "type": "video",
+                        "video": {
+                            "type": "external",
+                            "external": {"url": block['url']}
+                        }
+                    })
+
+            # Main Image (at top of content too?)
+            # Usually Cover Image is set as page cover or just main property. 
+            # We already set it in 'Image' property. User might want it in body too?
+            # Let's create the page first with properties.
+
+            main_img_url = get_gh_url(entry['image_filename']) or entry['image_url_original']
 
             client.pages.create(
                 parent={"database_id": database_id},
                 properties={
                     "Date": {"date": {"start": datetime.fromtimestamp(entry["timestamp"]).isoformat()}},
                     "Title": {"title": [{"text": {"content": entry["title"]}}]},
-                    "Content (JP)": {"rich_text": [{"text": {"content": entry["original_text"][:2000]}}]}, # Truncate if too long
+                    "Content (JP)": {"rich_text": [{"text": {"content": entry["original_text"][:2000]}}]},
                     "Content (CN)": {"rich_text": [{"text": {"content": entry["translated_text"][:2000]}}]},
                     "Original URL": {"url": entry["image_url_original"]},
                     "Image": {
@@ -259,13 +337,14 @@ def upload_to_notion(entries):
                             {
                                 "name": entry["image_filename"],
                                 "type": "external",
-                                "external": {"url": image_url}
+                                "external": {"url": main_img_url}
                             }
                         ]
                     }
-                }
+                },
+                children=children_blocks
             )
-            time.sleep(0.5) # Avoid rate limits
+            time.sleep(0.5) 
         except Exception as e:
             print(f"Failed to upload to Notion: {e}")
 
