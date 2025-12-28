@@ -1,0 +1,101 @@
+{
+    "c_member_dsp_infos": {
+        "1200004390": {
+            "1200004390_57698938": "57698938"
+        }
+    },
+    "shop_datas": {
+        "1200004390": {
+            "c_commu_id": "1200004390",
+            "name": "BBW",
+            "shop_kana": "\u3073\u30fc\u3073\u30fc\u3060\u3076\u308a\u3085\u30fc",
+            "district_id": "12",
+            "shop_opentime": "9\uff1a30\uff5e\u7fcc5\uff1a00",
+            "shop_holiday_hev": null,
+            "shop_address": "\u6771\u4eac\u90fd\u65b0\u5927\u4e45\u4fdd\uff08\u65b0\u5bbf\u533a\uff09",
+            "hotederi_flg": "0",
+            "shop_type": "02",
+            "shop_directry_name": "bb-w",
+            "shop_lank": "01",
+            "logo_filename_pc": "shlg1200004390_20200422164456pc.jpg",
+            "business_trip": "\u6771\u4eac23\u533a\u5185\u30c7\u30ea\u30d0\u30ea\u30fc",
+            "property_value": "02",
+            "first_area_id": "A1304",
+            "shop_tel_disp_flg": 0,
+            "tel_precautions": null,
+            "shop_mail": "bbwtokyo2014@gmail.com",
+            "line_id": "https:\/\/lin.ee\/jkLeyZ3",
+            "wechat_id": "a08054507342",
+            "wechat_qr_filename": null,
+            "kakaotalk_id": "a08054507342",
+            "kakaotalk_qr_filename": null,
+            "whatsapp_url": "https:\/\/wa.me\/818054507342",
+            "whatsapp_qr_filename": "whatsapp_qr_20241114182018.jpg",
+            "other_hidden_flag": 0,
+            "introduction_title_m": "BBW TOKYO",
+            "info_m": "BBW TOKYO\u662f\u65e5\u672c\u6700\u6709\u540d\u3001\u6700\u53d7\u6b22\u8fce\u7684\u4e30\u6ee1\u5973\u7279\u8272\u5e97\u3002\u4ece\u5168\u65e5\u672c\u4e25\u683c\u6311\u9009\u7684\u5de8\u4e73\u7f8e\u5973\u5c06\u4fd8\u864f\u987e\u5ba2\u3002\u5e97\u5185\u5927\u91cf\u6ce8\u518c\u4e86I\u7f69\u676f\u4ee5\u4e0a\u5de8\u4e73\u3001\u4e30\u81c0\u3001\u4e30\u6ee1\u7684\u5973\u5b69\u4ee5\u53caAV\u5973\u4f18\u3002",
+            "access_text_m": "\u4e1c\u4eac\u90fd\u5185\u6240\u6709\u533a\u57df",
+            "shop_address_chs": null,
+            "shop_address_cht": null,
+            "shop_address_en": null,
+            "shop_address_kr": null,
+            "shop_opentime_chs": "9:00\uff5e\u6b21\u65e55:00",
+            "shop_opentime_cht": "9:00~\u6b21\u65e55:00",
+            "shop_opentime_en": "9:00~5:00 the next day",
+            "shop_opentime_kr": "9:00~\ub2e4\uc74c 5:00",
+            "contact_time_open": "09:00",
+            "contact_time_close": "05:00",
+            "shop_holiday_m": "\u5168\u5e74\u65e0\u4f11",
+            "shop_closed_weekday": "",
+            "shop_romaji": "BBW",
+            "notes_title_m": null,
+            "notes_text_m": null,
+            "traffic_guide": null,
+            "business_large_name": "\u4e0a\u95e8\u670d\u52a1",
+            "first_area_name": "Shinjuku\u30fbOkubo\u30fbTakadanobaba",
+            "multilingual_chat_url": "https:\/\/yoasobi-heaven.com\/heaven-chat\/shop?id=1200004390",
+            "multilingual_chat_disp_flg": 1,
+            "multilingual_chat_tel_flg": 1,
+            "yoyaku_use_flg": 0,
+            "shop_tel": "03-5155-1251",
+            "shop_tel_international": "+81-3-5155-1251",
+            "shop_kana_romaji": "BBW",
+            "area_code": "tt",
+            "jyoken_list": [
+                {
+                    "category_id": 1,
+                    "category_name": "pay",
+                    "jyoken_id": 7,
+                    "jyoken_name": "\u73fe\u91d1"
+                },
+                {
+                    "category_id": 1,
+                    "category_name": "pay",
+                    "jyoken_id": 1,
+                    "jyoken_name": "Alipay"
+                },
+                {
+                    "category_id": 1,
+                    "category_name": "pay",
+                    "jyoken_id": 4,
+                    "jyoken_name": "WeChat"
+                },
+                {
+                    "category_id": 3,
+                    "category_name": "creditcard",
+                    "jyoken_id": 8,
+                    "jyoken_name": "\u5229\u7528\u53ef"
+                }
+            ],
+            "shop_contacttime_flg": 0,
+            "shop_closed_weekday_flg": 0,
+            "outside_business_flg": 0
+        }
+    },
+    "shop_urls": {
+        "1200004390": "\/zh-hans\/tokyo\/A1304\/bb-w\/"
+    },
+    "diary_type": "",
+    "page": 1,
+    "redirect_url": "https:\/\/yoasobi-heaven.com\/zh-hans\/tokyo\/A1304\/bb-w\/girlid-57698938\/diary\/"
+}
