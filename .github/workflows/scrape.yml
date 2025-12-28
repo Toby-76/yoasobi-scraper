@@ -1,0 +1,47 @@
+name: Scrape Diary
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # Run every 6 hours
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: 'Force pull all history (ignore existing)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12' 
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Run scraper
+      env:
+        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        BACKFILL: ${{ inputs.backfill }}
+      run: python scraper.py
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.name 'GitHub Action'
+        git config --global user.email 'action@github.com'
+        git add images/ data_store.json
+        # Only commit if there are changes
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update diary data" && git push)
