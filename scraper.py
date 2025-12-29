@@ -94,38 +94,42 @@ def fetch_diary_entries(session, token, params, page=1):
         print(f"Failed to fetch diary entries: {e}")
         return []
 
-def download_image(url):
-    """Download image and return local filename."""
+def download_file(url, folder="images"):
+    """Download file and return filename if successful."""
     if not url:
         return None
-    
-    # Create persistent filename based on URL hash to avoid duplicates
-    url_hash = hashlib.md5(url.encode()).hexdigest()
-    ext = os.path.splitext(url)[1]
-    if not ext:
-        ext = ".jpg" # Default fallback
         
-    filename = f"{url_hash}{ext}"
-    filepath = os.path.join(IMAGE_DIR, filename)
-    
-    # Persistence check: Don't re-download if exists
-    if os.path.exists(filepath):
-        return filename
-        
-    print(f"Downloading image: {url}")
     try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        response.raise_for_status()
+        # Create folder if not exists
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+            
+        filename = os.path.basename(url.split("?")[0]) # Handle query params
+        filepath = os.path.join(folder, filename)
         
-        # Ensure directory exists
-        os.makedirs(IMAGE_DIR, exist_ok=True)
-        
-        with open(filepath, "wb") as f:
-            f.write(response.content)
-        return filename
+        # Helper to check if valid (simple size check or existence)
+        if os.path.exists(filepath):
+            return filename
+            
+        # Download
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+        }
+        r = requests.get(url, headers=headers, stream=True)
+        if r.status_code == 200:
+            with open(filepath, 'wb') as f:
+                for chunk in r.iter_content(1024):
+                    f.write(chunk)
+            print(f"Downloaded: {filename}")
+            return filename
+        else:
+            print(f"Failed to download {url}: {r.status_code}")
+            return None
     except Exception as e:
-        print(f"Error downloading image {url}: {e}")
+        print(f"Error downloading {url}: {e}")
         return None
+
+download_image = download_file
 
 def translate_text(text):
     """Translate Japanese text to Simplified Chinese using Google Translate (Deep Translator)."""
@@ -214,17 +218,13 @@ def process_and_save(entries):
             video_url = f"https://img.cityheaven.net/cs/mvdiary/{commu_id}/{member_id}/{diary_id}/{movie_file}"
             print(f"Found video: {video_url}")
             
-            # Download video? Or just link it? 
-            # Notion allows external video links (embeds). 
-            # Downloading 50MB video might be heavy for GitHub Actions artifact? 
-            # User asked to "save to MP4". If we download, we need to commit it. GitHub repo limit is 1GB-ish.
-            # Storing videos in git is bad practice.
-            # BUT user asked "can we save it as mp4". 
-            # Let's try to link it first (persistent URL?). 
-            # Check if URL expires. Cityheaven URLs usually static.
-            # Use EXTERNAL VIDEO block in Notion.
-            # If user insisted on "saving", maybe they meant "in Notion".
-            content_blocks.append({"type": "video", "url": video_url})
+            # Download video to handle 404/Referer issues in Notion
+            v_name = download_file(video_url)
+            if v_name:
+                 content_blocks.append({"type": "video", "filename": v_name, "url": video_url})
+            else:
+                 # Fallback to URL if download fails (might still 404 but better than nothing)
+                 content_blocks.append({"type": "video", "url": video_url})
 
         # 4. Parse Date
         date_str = entry.get("create_date") 
@@ -308,12 +308,17 @@ def upload_to_notion(entries):
                         }
                     })
                 elif block['type'] == 'video':
+                    # Use GitHub URL if filename exists
+                    vid_src = block.get('url')
+                    if block.get('filename'):
+                        vid_src = get_gh_url(block['filename']) or vid_src
+
                     children_blocks.append({
                         "object": "block",
                         "type": "video",
                         "video": {
                             "type": "external",
-                            "external": {"url": block['url']}
+                            "external": {"url": vid_src}
                         }
                     })
 
@@ -366,45 +371,31 @@ def fetch_all_entries(session, token, params, existing_ids):
             print("No more entries found. Stopping pagination.")
             break
             
-        new_batch = []
-        stop_signal = False
+        new_items_on_page = 0
+        total_items = len(entries)
         
         for entry in entries:
             diary_id = str(entry.get("c_diary_id"))
             
             if diary_id in existing_ids:
-                if not force_backfill:
-                    print(f"Encountered existing entry {diary_id}. Stopping fetch (Standard Mode).")
-                    stop_signal = True
-                    break # Stop processing this page
-                else:
-                    # In backfill mode, just skip adding this one but continue the loop
-                    continue
+                # Skip duplicate
+                continue
             
-            new_batch.append(entry)
+            all_entries.append(entry)
+            new_items_on_page += 1
             
-        # Check standard stop condition
-        if stop_signal:
-             break
-             
-        # If searching (Backfill or Empty/New Page), but we found no NEW entries on this page?
-        # If backfill is on, we might find a page where ALL entries exist (e.g. page 1), but page 2 might have gaps?
-        # Usually unlikely, but to be safe in backfill mode, we should ONLY stop if the API returns 0 items.
-        # But if `new_batch` is empty AND we are NOT in stop_signal, it means all items on this page were duplicates.
-        # If standard mode, we would have hit the break above.
-        # If backfill mode, we should Keep Going because there might be gaps in history? 
-        # Or usually if Page N is fully scraped, Page N+1 is likely scraped too. 
-        # But let's be robust: In backfill, we keep going until API is empty.
+        print(f"Page {page}: Found {new_items_on_page} new entries out of {total_items}.")
         
-        if new_batch:
-            all_entries.extend(new_batch)
-            print(f"Added {len(new_batch)} new entries from page {page}.")
-        elif force_backfill:
-             print(f"Page {page} processed (all duplicates), continuing to next page...")
-        elif not new_batch:
-            # If standard mode and no new entries (but didn't trip stop_signal??), break safety
-            print("No new entries on this page. Stopping.")
-            break
+        # Stop Condition for Standard Mode
+        if not force_backfill:
+            if new_items_on_page == 0:
+                print("No new entries found on this page. Stopping pagination.")
+                break
+        
+        # Safety limit to prevent infinite loops (e.g. if logic fails)
+        if page > 100: 
+             print("Reached page 100 limit. Stopping.")
+             break
 
         page += 1
         time.sleep(1) # Be nice to the server
