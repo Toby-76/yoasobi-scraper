@@ -173,23 +173,14 @@ def process_and_save(entries):
         diary_id = entry.get("c_diary_id")
         
         if diary_id in processed_ids:
+            # print(f"Skipping duplicate entry {diary_id}")
             continue
+            
+        print(f"Processing new entry: {entry.get('subject')}")
         
-        # 使用 try-except 包装整个处理流程，确保单个条目出错不影响其他条目
-        try:
-            print(f"Processing entry {diary_id}: {entry.get('subject')}")
-            
-            # 1. Main Cover Image
-            image_url = entry.get("girls_image_url")
-            main_image_name = None
-            
-            # 尝试下载封面图，如果失败（如视频封面、受限内容），继续处理
-            if image_url:
-                main_image_name = download_file(image_url)
-                if not main_image_name:
-                    print(f"  ⚠️  Failed to download cover image for {diary_id}, will use original URL")
-            else:
-                print(f"  ⚠️  No cover image URL for {diary_id}")
+        # 1. Main Cover Image
+        image_url = entry.get("girls_image_url")
+        main_image_name = download_file(image_url)
         
         # 2. Content & Cookie Validation
         raw_text = entry.get("decoded_body_org", "") or entry.get("body", "")
@@ -287,16 +278,9 @@ def process_and_save(entries):
             "image_url_original": image_url,
             "timestamp": timestamp,
             "content_blocks": content_blocks
-            }
-            
-            new_entries.append(processed_entry)
-            
-        except Exception as e:
-            print(f"❌ Error processing entry {diary_id}: {e}")
-            import traceback
-            traceback.print_exc()
-            # 继续处理其他条目，不中断整个流程
-            continue
+        }
+        
+        new_entries.append(processed_entry)
         
     # Sort new entries by timestamp descending (Newest First)
     new_entries.sort(key=lambda x: x["timestamp"], reverse=True)
