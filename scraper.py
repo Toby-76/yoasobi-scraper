@@ -163,8 +163,11 @@ def process_and_save(entries):
             pass
 
     new_entries = []
-    current_year = datetime.now().year
-    from datetime import timedelta # Ensure import
+    # Timezone definition (JST = UTC+9)
+    from datetime import timezone, timedelta
+    JST = timezone(timedelta(hours=9))
+    current_now_jst = datetime.now(JST)
+    current_year = current_now_jst.year
     
     for entry in entries:
         diary_id = entry.get("c_diary_id")
@@ -177,40 +180,55 @@ def process_and_save(entries):
         
         # 1. Main Cover Image
         image_url = entry.get("girls_image_url")
-        main_image_name = download_image(image_url)
+        main_image_name = download_file(image_url)
         
         # 2. Content & Cookie Validation
         raw_text = entry.get("decoded_body_org", "") or entry.get("body", "")
         if "マイガール登録" in raw_text or "Member Only" in raw_text:
              print("⚠️  WARNING: Member Only content detected! Your YOASOBI_COOKIES might be invalid or expired.")
 
-        # 3. Rich Content Extraction (Body Images + Video)
+        # 3. Rich Content Extraction
         content_blocks = []
         
-        # A. Text Content (Paragraphs)
+        # PREPARE TEXT
         # Simple HTML to text cleanup (preserving newlines)
-        clean_text = re.sub(r'<br\s*/?>', '\n', raw_text)
-        clean_text = re.sub(r'<[^>]+>', '', clean_text) # Remove other tags
-        translated_text = translate_text(clean_text)
+        # Use simple replaces to keep it fast and dependency-free (no BS4 needed yet)
+        clean_text_jp = re.sub(r'<br\s*/?>', '\n', raw_text)
+        clean_text_jp = re.sub(r'<[^>]+>', '', clean_text_jp) # Remove other tags
+        clean_text_jp = clean_text_jp.strip()
+        
+        translated_text = translate_text(clean_text_jp)
+        
+        # STRUCTURE:
+        # [Heading] 原文
+        # [Text] JP
+        # [Divider]
+        # [Heading] 译文
+        # [Text] CN
+        # [Divider]
+        # [Media]
+        
+        content_blocks.append({"type": "heading_2", "content": "🇯🇵 原文"})
+        content_blocks.append({"type": "text", "content": clean_text_jp})
+        
+        content_blocks.append({"type": "divider"})
+        
+        content_blocks.append({"type": "heading_2", "content": "🇨🇳 译文"})
         content_blocks.append({"type": "text", "content": translated_text})
         
+        content_blocks.append({"type": "divider"})
+
         # B. Inline Images from Body
-        # Regex to find <img src="..."> in the raw body (not decoded, as decoded strip tags sometimes?)
-        # Use 'body' or 'pcbody' for HTML
         html_body = entry.get("body", "") or entry.get("pcbody", "")
         inline_images = re.findall(r'src="([^"]+)"', html_body)
         
         for img_src in inline_images:
             if "cityheaven.net" in img_src or "yoasobi-heaven" in img_src:
-                # Some are deco/emoji, filter if needed? 
-                # Let's verify it's a photo (usually contains 'img/girls' or 'img/deco')
-                # Users want all images including menu items, so download all.
-                f_name = download_image(img_src)
+                f_name = download_file(img_src)
                 if f_name:
                     content_blocks.append({"type": "image", "filename": f_name, "url": img_src})
 
-        # C. Video (if exists)
-        # https://img.cityheaven.net/cs/mvdiary/{commu_id}/{member_id}/{diary_id}/{filename}
+        # C. Video
         movie_file = entry.get("movie_filename")
         if movie_file:
             commu_id = entry.get("c_commu_id")
@@ -218,37 +236,48 @@ def process_and_save(entries):
             video_url = f"https://img.cityheaven.net/cs/mvdiary/{commu_id}/{member_id}/{diary_id}/{movie_file}"
             print(f"Found video: {video_url}")
             
-            # Download video to handle 404/Referer issues in Notion
             v_name = download_file(video_url)
             if v_name:
                  content_blocks.append({"type": "video", "filename": v_name, "url": video_url})
             else:
-                 # Fallback to URL if download fails (might still 404 but better than nothing)
                  content_blocks.append({"type": "video", "url": video_url})
 
-        # 4. Parse Date
+        # 4. Parse Date (JST Aware)
         date_str = entry.get("create_date") 
-        timestamp = time.time()
+        timestamp = time.time() # Default fallback (local system time)
         
         if date_str:
             try:
-                dt = datetime.strptime(f"{current_year}/{date_str}", "%Y/%m/%d %H:%M")
-                if dt > datetime.now() + timedelta(days=1):
-                    dt = dt.replace(year=current_year - 1)
-                timestamp = dt.timestamp()
+                # Parse naive time first (12/29 18:00)
+                dt_naive = datetime.strptime(f"{current_year}/{date_str}", "%Y/%m/%d %H:%M")
+                
+                # Make it JST aware
+                dt_jst = dt_naive.replace(tzinfo=JST)
+                
+                # Year Wrap Logic: Compare against JST time
+                # If date is in future (> now + 1 day), it implies previous year
+                if dt_jst > current_now_jst + timedelta(days=1):
+                    dt_jst = dt_jst.replace(year=current_year - 1)
+                
+                # Convert to UTC timestamp (standard for machines)
+                timestamp = dt_jst.timestamp()
+                
+                # Debug output
+                # print(f"Date: {date_str} -> {dt_jst} -> TS: {timestamp}")
+                
             except Exception as e:
                 print(f"Error parsing date '{date_str}': {e}")
-
+                
         processed_entry = {
             "id": diary_id,
             "date": date_str,
             "title": entry.get("subject"),
-            "original_text": clean_text,
+            "original_text": clean_text_jp,
             "translated_text": translated_text,
             "image_filename": main_image_name,
             "image_url_original": image_url,
             "timestamp": timestamp,
-            "content_blocks": content_blocks # New field
+            "content_blocks": content_blocks
         }
         
         new_entries.append(processed_entry)
@@ -283,21 +312,34 @@ def upload_to_notion(entries):
             # 1. Prepare Block Children (The Page Content)
             children_blocks = []
             
-            # Add Text Paragraph
-            # Split text by newlines to make nice paragraphs
-            for line in entry['translated_text'].split('\n'):
-                if line.strip():
+            for block in entry.get("content_blocks", []):
+                b_type = block.get('type')
+                
+                if b_type == 'heading_2':
                     children_blocks.append({
                         "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {
-                            "rich_text": [{"type": "text", "text": {"content": line[:2000]}}]
+                        "type": "heading_2",
+                        "heading_2": {
+                            "rich_text": [{"type": "text", "text": {"content": block['content']}}]
                         }
                     })
-            
-            # Add Rich Media Blocks (Inline Images/Videos from body)
-            for block in entry.get("content_blocks", []):
-                if block['type'] == 'image':
+                elif b_type == 'divider':
+                    children_blocks.append({
+                        "object": "block",
+                        "type": "divider",
+                        "divider": {}
+                    })
+                elif b_type == 'text':
+                    for line in block['content'].split('\n'):
+                        if line.strip():
+                            children_blocks.append({
+                                "object": "block",
+                                "type": "paragraph",
+                                "paragraph": {
+                                    "rich_text": [{"type": "text", "text": {"content": line[:2000]}}]
+                                }
+                            })
+                elif b_type == 'image':
                     img_gh_url = get_gh_url(block['filename']) or block['url']
                     children_blocks.append({
                         "object": "block",
@@ -307,7 +349,7 @@ def upload_to_notion(entries):
                             "external": {"url": img_gh_url}
                         }
                     })
-                elif block['type'] == 'video':
+                elif b_type == 'video':
                     # Use GitHub URL if filename exists
                     vid_src = block.get('url')
                     if block.get('filename'):
