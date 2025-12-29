@@ -94,8 +94,15 @@ def fetch_diary_entries(session, token, params, page=1):
         print(f"Failed to fetch diary entries: {e}")
         return []
 
-def download_file(url, folder="images"):
-    """Download file and return filename if successful."""
+def download_file(url, folder="images", session=None, referer=None):
+    """Download file and return filename if successful.
+    
+    Args:
+        url: URL of the file to download
+        folder: Destination folder
+        session: Optional requests.Session for reusing cookies/headers
+        referer: Optional referer URL to bypass anti-hotlinking
+    """
     if not url:
         return None
         
@@ -111,11 +118,19 @@ def download_file(url, folder="images"):
         if os.path.exists(filepath):
             return filename
             
-        # Download
+        # Download with anti-hotlinking protection
         headers = {
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
-        r = requests.get(url, headers=headers, stream=True)
+        
+        # Add referer if provided (important for anti-hotlinking)
+        if referer:
+            headers["Referer"] = referer
+            
+        # Use session if provided, otherwise use requests directly
+        requester = session if session else requests
+        r = requester.get(url, headers=headers, stream=True)
+        
         if r.status_code == 200:
             with open(filepath, 'wb') as f:
                 for chunk in r.iter_content(1024):
@@ -150,8 +165,13 @@ import re
 
 # ... existing imports ...
 
-def process_and_save(entries):
-    """Process entries, translate, download images, and prepare for Notion."""
+def process_and_save(entries, session=None):
+    """Process entries, translate, download images, and prepare for Notion.
+    
+    Args:
+        entries: List of diary entries
+        session: Optional requests.Session for downloading files
+    """
     # ... existing processed_ids check ...
     processed_ids = set()
     if os.path.exists(DATA_FILE):
@@ -178,9 +198,20 @@ def process_and_save(entries):
             
         print(f"Processing new entry: {entry.get('subject')}")
         
-        # 1. Main Cover Image
-        image_url = entry.get("girls_image_url")
-        main_image_name = download_file(image_url)
+        # 1. Main Cover Image/Video Detection
+        cover_url = entry.get("girls_image_url")
+        cover_filename = None
+        cover_type = "image"  # default
+        
+        if cover_url:
+            # Detect if cover is a video by extension
+            cover_ext = os.path.splitext(cover_url.split("?")[0])[1].lower()
+            if cover_ext in ['.mp4', '.mov', '.avi', '.webm']:
+                cover_type = "video"
+                print(f"  Detected video cover: {cover_url}")
+            
+            # Download with anti-hotlinking protection
+            cover_filename = download_file(cover_url, session=session, referer=BASE_URL)
         
         # 2. Content & Cookie Validation
         raw_text = entry.get("decoded_body_org", "") or entry.get("body", "")
@@ -189,6 +220,16 @@ def process_and_save(entries):
 
         # 3. Rich Content Extraction
         content_blocks = []
+        
+        # Add video cover at the top if cover is a video
+        if cover_type == "video" and cover_filename:
+            content_blocks.append({
+                "type": "video", 
+                "filename": cover_filename, 
+                "url": cover_url,
+                "is_cover": True  # Mark this as the cover video
+            })
+            content_blocks.append({"type": "divider"})
         
         # PREPARE TEXT
         # Simple HTML to text cleanup (preserving newlines)
@@ -224,7 +265,7 @@ def process_and_save(entries):
         
         for img_src in inline_images:
             if "cityheaven.net" in img_src or "yoasobi-heaven" in img_src:
-                f_name = download_file(img_src)
+                f_name = download_file(img_src, session=session, referer=BASE_URL)
                 if f_name:
                     content_blocks.append({"type": "image", "filename": f_name, "url": img_src})
 
@@ -236,7 +277,7 @@ def process_and_save(entries):
             video_url = f"https://img.cityheaven.net/cs/mvdiary/{commu_id}/{member_id}/{diary_id}/{movie_file}"
             print(f"Found video: {video_url}")
             
-            v_name = download_file(video_url)
+            v_name = download_file(video_url, session=session, referer=BASE_URL)
             if v_name:
                  content_blocks.append({"type": "video", "filename": v_name, "url": video_url})
             else:
@@ -274,8 +315,9 @@ def process_and_save(entries):
             "title": entry.get("subject"),
             "original_text": clean_text_jp,
             "translated_text": translated_text,
-            "image_filename": main_image_name,
-            "image_url_original": image_url,
+            "cover_filename": cover_filename,
+            "cover_type": cover_type,  # "image" or "video"
+            "image_url_original": cover_url,
             "timestamp": timestamp,
             "content_blocks": content_blocks
         }
@@ -369,26 +411,61 @@ def upload_to_notion(entries):
             # We already set it in 'Image' property. User might want it in body too?
             # Let's create the page first with properties.
 
-            main_img_url = get_gh_url(entry['image_filename']) or entry['image_url_original']
-
-            client.pages.create(
-                parent={"database_id": database_id},
-                properties={
-                    "Date": {"date": {"start": datetime.fromtimestamp(entry["timestamp"]).isoformat()}},
-                    "Title": {"title": [{"text": {"content": entry["title"]}}]},
-                    "Content (JP)": {"rich_text": [{"text": {"content": entry["original_text"][:2000]}}]},
-                    "Content (CN)": {"rich_text": [{"text": {"content": entry["translated_text"][:2000]}}]},
-                    "Original URL": {"url": entry["image_url_original"]},
-                    "Image": {
+            # Handle video vs image cover
+            # If cover is a video, we've already added it to content_blocks at the top
+            # For the Image property, we'll use the first image from content or None
+            
+            cover_type = entry.get('cover_type', 'image')
+            cover_filename = entry.get('cover_filename')
+            
+            # Prepare Image property
+            image_property = None
+            if cover_type == 'image' and cover_filename:
+                # Normal image cover
+                cover_gh_url = get_gh_url(cover_filename) or entry.get('image_url_original')
+                if cover_gh_url:
+                    image_property = {
                         "files": [
                             {
-                                "name": entry["image_filename"],
+                                "name": cover_filename,
                                 "type": "external",
-                                "external": {"url": main_img_url}
+                                "external": {"url": cover_gh_url}
                             }
                         ]
                     }
-                },
+            else:
+                # Cover is video or missing, try to find first image from content
+                for block in entry.get('content_blocks', []):
+                    if block.get('type') == 'image' and block.get('filename'):
+                        img_gh_url = get_gh_url(block['filename']) or block.get('url')
+                        if img_gh_url:
+                            image_property = {
+                                "files": [
+                                    {
+                                        "name": block['filename'],
+                                        "type": "external",
+                                        "external": {"url": img_gh_url}
+                                    }
+                                ]
+                            }
+                            break
+
+            # Build properties
+            properties = {
+                "Date": {"date": {"start": datetime.fromtimestamp(entry["timestamp"]).isoformat()}},
+                "Title": {"title": [{"text": {"content": entry["title"]}}]},
+                "Content (JP)": {"rich_text": [{"text": {"content": entry["original_text"][:2000]}}]},
+                "Content (CN)": {"rich_text": [{"text": {"content": entry["translated_text"][:2000]}}]},
+                "Original URL": {"url": entry.get("image_url_original", "")},
+            }
+            
+            # Add Image property if we have one
+            if image_property:
+                properties["Image"] = image_property
+
+            client.pages.create(
+                parent={"database_id": database_id},
+                properties=properties,
                 children=children_blocks
             )
             time.sleep(0.5) 
@@ -469,7 +546,7 @@ if __name__ == "__main__":
     
     # 4. Process (Download & Translate)
     # Note: process_and_save also checks duplicates, but our fetch loop does it to save API calls
-    new_data = process_and_save(entries)
+    new_data = process_and_save(entries, session=session)
     
     if new_data:
         print(f"Successfully processed {len(new_data)} new entries.")
