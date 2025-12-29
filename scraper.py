@@ -178,27 +178,9 @@ def process_and_save(entries):
             
         print(f"Processing new entry: {entry.get('subject')}")
         
-        # 1. Main Cover Image (or Video Thumbnail)
+        # 1. Main Cover Image
         image_url = entry.get("girls_image_url")
-        main_image_name = None
-        
-        # Try to download the standard image first
-        if image_url:
-            main_image_name = download_file(image_url)
-        
-        # Fallback: If no image URL or download failed, try to use video thumbnail
-        if not main_image_name:
-            movie_file = entry.get("movie_filename")
-            if movie_file:
-                commu_id = entry.get("c_commu_id")
-                member_id = entry.get("c_member_id")
-                # Construct video thumbnail URL (same as video URL)
-                video_thumb_url = f"https://img.cityheaven.net/cs/mvdiary/{commu_id}/{member_id}/{diary_id}/{movie_file}"
-                print(f"No image cover found, using video thumbnail: {video_thumb_url}")
-                main_image_name = download_file(video_thumb_url)
-                # Use video URL as the "image_url" for Notion
-                if not image_url:
-                    image_url = video_thumb_url
+        main_image_name = download_file(image_url)
         
         # 2. Content & Cookie Validation
         raw_text = entry.get("decoded_body_org", "") or entry.get("body", "")
